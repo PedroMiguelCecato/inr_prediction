@@ -6,8 +6,12 @@ class INRDataManipulation:
     def __init__(self, path=None, sheet_name="TTR"):
         self.path = path
         self.sheet_name = sheet_name
+
         self.data_original = None
+        self.data_weekly = None
         self.data_final = None
+        self.features_dose = None
+        self.features_inr = None
 
         if path is not None:
             self.read_data()
@@ -15,35 +19,54 @@ class INRDataManipulation:
         else:
             print("Caminho do arquivo não definido. Use set_path() para definir o caminho.")
 
-    def check_path_and_data(self, require_final=False):
+    # =========================
+    # Infraestrutura básica
+    # =========================
+    def check_path_and_data(self, require_final=True):
         if self.path is None:
             raise ValueError("Caminho do arquivo não definido. Use set_path() para definir o caminho.")
+        
         if self.data_original is None:
             self.read_data()
+
         if require_final and self.data_final is None:
             self.fit_data()
 
     def set_path(self, path=None, sheet_name="TTR"):
         self.path = path
         self.sheet_name = sheet_name
-        if path is not None:
-            self.read_data()
-            self.fit_data()
-        else:
-            self.data_original = None
-            self.data_final = None
 
-    def get_data(self, final=True):
-        if final:
-            self.check_path_and_data(require_final=True)
-            return self.data_final
-        else:
-            self.check_path_and_data(require_final=False)
-            return self.data_original
+        self.data_original = None
+        self.data_weekly = None
+        self.data_final = None
+        self.feature_columns = None
 
+        self.check_path_and_data()
+
+    def get_data_original(self):
+        self.check_path_and_data(require_final=False)
+        return self.data_original
+
+    def get_data_weekly(self):
+        self.check_path_and_data()
+        return self.data_weekly
+
+    def get_data_final(self):
+        self.check_path_and_data()
+        return self.data_final
+
+    def get_features_dose(self):
+        self.check_path_and_data()
+        return self.features_dose
+
+    def get_features_inr(self):
+        self.check_path_and_data()
+        return self.features_inr
+    
+    # =========================
+    # Leitura e execução
+    # =========================
     def read_data(self):
-        if self.path is None:
-            raise ValueError("Caminho do arquivo não definido. Use set_path() para definir o caminho.")
         # tenta excel primeiro
         try:
             df = pd.read_excel(self.path, sheet_name=self.sheet_name)
@@ -56,7 +79,71 @@ class INRDataManipulation:
 
         self.data_original = df.copy()
 
-    def weekly_data(self, data, freq_days=7, tolerance_days=3):
+    def fit_data(self):
+        self.check_path_and_data(require_final=False)
+        data = self.data_original.copy()
+
+        # tentar extrair low_range/high_range de 'Unnamed: 15'
+        low_val = None
+        high_val = None
+        if 'Unnamed: 15' in data.columns:
+            low_val = data.loc[0, 'Unnamed: 15'] if 0 in data.index else None
+            high_val = data.loc[1, 'Unnamed: 15'] if 1 in data.index else None
+
+        # criar colunas low_range/high_range se ausentes
+        if low_val is not None:
+            data['low_range'] = low_val
+        else:
+            data['low_range'] = np.nan
+
+        if high_val is not None:
+            data['high_range'] = high_val
+        else:
+            data['high_range'] = np.nan
+
+        # filtrar colunas necessárias
+        needed = []
+        for c in ['Test Date', 'DOSE SEMANAL', 'INR', 'INR Diff']:
+            if c in data.columns:
+                needed.append(c)
+            else:
+                raise ValueError(f"Coluna esperada '{c}' não encontrada no arquivo.")
+
+        data_filtred = data[needed + ['low_range', 'high_range']].copy()
+        data_filtred = data_filtred.rename(columns={'DOSE SEMANAL': 'dose_semanal',
+                                                    'INR Diff': 'inr_diff',
+                                                    'INR': 'inr',
+                                                    'Test Date': 'test_date'})
+
+        # garantir tipos adequados
+        data_filtred["test_date"] = pd.to_datetime(data_filtred["test_date"], errors="coerce")
+        data_filtred["dose_semanal"] = pd.to_numeric(data_filtred.get("dose_semanal"), errors="coerce")
+        data_filtred["inr"] = pd.to_numeric(data_filtred.get("inr"), errors="coerce")
+        data_filtred["inr_diff"] = pd.to_numeric(data_filtred.get("inr_diff"), errors="coerce")
+        data_filtred["low_range"] = pd.to_numeric(data_filtred.get("low_range"), errors="coerce")
+        data_filtred["high_range"] = pd.to_numeric(data_filtred.get("high_range"), errors="coerce")
+
+        # ordenar
+        data_filtred = data_filtred.sort_values('test_date').reset_index(drop=True)
+
+        # preencher inr NaN com média
+        media_inr = data_filtred["inr"].mean(skipna=True)
+        data_filtred["inr"] = data_filtred["inr"].fillna(media_inr)
+
+        # recalcular inr_diff
+        data_filtred['inr_diff'] = data_filtred['inr'].diff().round(3)
+        if len(data_filtred) > 0:
+            data_filtred.loc[0, 'inr_diff'] = 0.0
+
+        # gerar dataset semanal, com novas features e salvar em self.data_final
+        self.data_weekly = self.weekly(data=data_filtred)
+        self.data_final = self.create_time_features(data=self.data_weekly)
+        return self.data_final
+
+    # =========================
+    # Manipulação de dados
+    # =========================
+    def weekly(self, data, freq_days=7, tolerance_days=3):
         # cópia defensiva e garantias
         df = data.copy()
         orig = df[['test_date', 'inr', 'dose_semanal', 'low_range', 'high_range']].copy()
@@ -157,66 +244,45 @@ class INRDataManipulation:
 
         return weekly_df
 
-    def fit_data(self):
-        self.check_path_and_data(require_final=False)
-        data = self.data_original.copy()
+    def create_time_features(self, data, date_col="test_date", target_col="inr",
+                             lags=[1,2,3,4], roll_windows=[2,4]):
+        df = data.copy()
 
-        # tentar extrair low_range/high_range de 'Unnamed: 15'
-        low_val = None
-        high_val = None
-        if 'Unnamed: 15' in data.columns:
-            low_val = data.loc[0, 'Unnamed: 15'] if 0 in data.index else None
-            high_val = data.loc[1, 'Unnamed: 15'] if 1 in data.index else None
+        # Features temporais 
+        df['weekofyear'] = df[date_col].dt.isocalendar().week.astype(int)
+        df['month'] = df[date_col].dt.month.astype(int)
+        df['year'] = df[date_col].dt.year.astype(int)
 
-        # criar colunas low_range/high_range se ausentes
-        if low_val is not None:
-            data['low_range'] = low_val
-        else:
-            data['low_range'] = np.nan
+        # Lags do INR (DEPENDÊNCIA TEMPORAL DO ALVO)
+        for lag in lags:
+            df[f'inr_lag_{lag}'] = df[target_col].shift(lag)
 
-        if high_val is not None:
-            data['high_range'] = high_val
-        else:
-            data['high_range'] = np.nan
+        # Médias móveis (SUAVIZAÇÃO DA DINÂMICA DO INR)
+        for w in roll_windows:
+            # média dos últimos w valores, deslocada para evitar vazamento de informação
+            df[f'inr_roll_mean_{w}'] = (df[target_col].shift(1).rolling(window=w, min_periods=1).mean())
 
-        # filtrar colunas necessárias
-        needed = []
-        for c in ['Test Date', 'DOSE SEMANAL', 'INR', 'INR Diff']:
-            if c in data.columns:
-                needed.append(c)
-            else:
-                raise ValueError(f"Coluna esperada '{c}' não encontrada no arquivo.")
+        # Remoção das primeiras linhas sem lags suficientes 
+        min_lag = max(lags) if len(lags) > 0 else 0
+        features_df = df.iloc[min_lag:].reset_index(drop=True)
 
-        data_filtred = data[needed + ['low_range', 'high_range']].copy()
-        data_filtred = data_filtred.rename(columns={'DOSE SEMANAL': 'dose_semanal',
-                                                    'INR Diff': 'inr_diff',
-                                                    'INR': 'inr',
-                                                    'Test Date': 'test_date'})
+        # Seleção das features
+        base_cols_f = ['dose_semanal', 'generated', 'weekofyear', 'month']
+        base_cols_i = ['inr', 'generated', 'weekofyear', 'month']
 
-        # garantir tipos adequados
-        data_filtred["test_date"] = pd.to_datetime(data_filtred["test_date"], errors="coerce")
-        data_filtred["dose_semanal"] = pd.to_numeric(data_filtred.get("dose_semanal"), errors="coerce")
-        data_filtred["inr"] = pd.to_numeric(data_filtred.get("inr"), errors="coerce")
-        data_filtred["inr_diff"] = pd.to_numeric(data_filtred.get("inr_diff"), errors="coerce")
-        data_filtred["low_range"] = pd.to_numeric(data_filtred.get("low_range"), errors="coerce")
-        data_filtred["high_range"] = pd.to_numeric(data_filtred.get("high_range"), errors="coerce")
+        lag_cols = [f'inr_lag_{lag}' for lag in lags]
+        roll_cols = [f'inr_roll_mean_{w}' for w in roll_windows]
 
-        # ordenar
-        data_filtred = data_filtred.sort_values('test_date').reset_index(drop=True)
+        feature_cols_f = base_cols_f + lag_cols + roll_cols
+        feature_cols_i = base_cols_i + lag_cols + roll_cols
+        self.features_dose = [c for c in feature_cols_f if c in features_df.columns]
+        self.features_inr = [c for c in feature_cols_i if c in features_df.columns]
+        
+        return features_df
 
-        # preencher inr NaN com média
-        media_inr = data_filtred["inr"].mean(skipna=True)
-        data_filtred["inr"] = data_filtred["inr"].fillna(media_inr)
-
-        # recalcular inr_diff
-        data_filtred['inr_diff'] = data_filtred['inr'].diff().round(3)
-        if len(data_filtred) > 0:
-            data_filtred.loc[0, 'inr_diff'] = 0.0
-
-        # gerar dataset semanal e salvar em self.data_final
-        self.data_final = self.weekly_data(data=data_filtred)
-        return self.data_final
-
+    # =========================
+    # Plot principal
+    # =========================
     def plot_inr(self, low=2.5, high=3.5):
         self.check_path_and_data(require_final=True)
 
