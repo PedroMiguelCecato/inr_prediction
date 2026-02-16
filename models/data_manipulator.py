@@ -3,15 +3,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 class INRDataManipulation:
-    def __init__(self, path=None, sheet_name="TTR"):
+    def __init__(self, path=None, sheet_name="TTR", sheet_name_id="IDENTIFICAÇÃO DO PACIENTE"):
         self.path = path
         self.sheet_name = sheet_name
+        self.sheet_name_id = sheet_name_id
+        self.nome_paciente = None
 
         self.data_original = None
         self.data_weekly = None
         self.data_final = None
-        self.features_dose = None
-        self.features_inr = None
 
         if path is not None:
             self.read_data()
@@ -32,14 +32,18 @@ class INRDataManipulation:
         if require_final and self.data_final is None:
             self.fit_data()
 
-    def set_path(self, path=None, sheet_name="TTR"):
+    def set_path(self, path=None, sheet_name="TTR", sheet_name_id="IDENTIFICAÇÃO DO PACIENTE"):
         self.path = path
         self.sheet_name = sheet_name
+        self.sheet_name_id = sheet_name_id
+        self.nome_paciente = None
 
         self.data_original = None
         self.data_weekly = None
         self.data_final = None
-        self.feature_columns = None
+
+        self.features_dose = None
+        self.features_inr = None
 
         self.check_path_and_data()
 
@@ -54,30 +58,20 @@ class INRDataManipulation:
     def get_data_final(self):
         self.check_path_and_data()
         return self.data_final
-
-    def get_features_dose(self):
-        self.check_path_and_data()
-        return self.features_dose
-
-    def get_features_inr(self):
-        self.check_path_and_data()
-        return self.features_inr
     
     # =========================
     # Leitura e execução
     # =========================
     def read_data(self):
-        # tenta excel primeiro
         try:
             df = pd.read_excel(self.path, sheet_name=self.sheet_name)
-        except Exception as e_excel:
-            # tenta CSV como fallback
-            try:
-                df = pd.read_csv(self.path)
-            except Exception as e_csv:
-                raise ValueError(f"Erro ao ler arquivo: Excel-> {e_excel}; CSV-> {e_csv}")
+            name_df = pd.read_excel(self.path, sheet_name=self.sheet_name_id)
+            nome_paciente = str(name_df.iloc[4, 1]).strip().upper()
 
-        self.data_original = df.copy()
+            self.nome_paciente = nome_paciente
+            self.data_original = df.copy()
+        except Exception as e_excel:
+            raise ValueError(f"Erro ao ler arquivo: Excel-> {e_excel}")
 
     def fit_data(self):
         self.check_path_and_data(require_final=False)
@@ -90,7 +84,7 @@ class INRDataManipulation:
             low_val = data.loc[0, 'Unnamed: 15'] if 0 in data.index else None
             high_val = data.loc[1, 'Unnamed: 15'] if 1 in data.index else None
 
-        # criar colunas low_range/high_range se ausentes
+        # criar colunas low_range/high_range e nome_paciente
         if low_val is not None:
             data['low_range'] = low_val
         else:
@@ -101,9 +95,11 @@ class INRDataManipulation:
         else:
             data['high_range'] = np.nan
 
+        data.insert(0, "nome_paciente", self.nome_paciente)
+
         # filtrar colunas necessárias
         needed = []
-        for c in ['Test Date', 'DOSE SEMANAL', 'INR', 'INR Diff']:
+        for c in ['nome_paciente', 'Test Date', 'DOSE SEMANAL', 'INR', 'INR Diff']:
             if c in data.columns:
                 needed.append(c)
             else:
@@ -116,6 +112,7 @@ class INRDataManipulation:
                                                     'Test Date': 'test_date'})
 
         # garantir tipos adequados
+        data_filtred["nome_paciente"] = data_filtred["nome_paciente"].astype(str)
         data_filtred["test_date"] = pd.to_datetime(data_filtred["test_date"], errors="coerce")
         data_filtred["dose_semanal"] = pd.to_numeric(data_filtred.get("dose_semanal"), errors="coerce")
         data_filtred["inr"] = pd.to_numeric(data_filtred.get("inr"), errors="coerce")
@@ -125,6 +122,9 @@ class INRDataManipulation:
 
         # ordenar
         data_filtred = data_filtred.sort_values('test_date').reset_index(drop=True)
+
+        # preencher dose_semanal com último valor observado (LOCF)
+        data_filtred["dose_semanal"] = data_filtred["dose_semanal"].ffill()
 
         # preencher inr NaN com média
         media_inr = data_filtred["inr"].mean(skipna=True)
@@ -136,9 +136,8 @@ class INRDataManipulation:
             data_filtred.loc[0, 'inr_diff'] = 0.0
 
         # gerar dataset semanal, com novas features e salvar em self.data_final
-        self.data_weekly = self.weekly(data=data_filtred)
-        self.data_final = self.create_time_features(data=self.data_weekly)
-        return self.data_final
+        self.weekly(data=data_filtred)
+        self.create_time_features(data=self.data_weekly)
 
     # =========================
     # Manipulação de dados
@@ -146,7 +145,7 @@ class INRDataManipulation:
     def weekly(self, data, freq_days=7, tolerance_days=3):
         # cópia defensiva e garantias
         df = data.copy()
-        orig = df[['test_date', 'inr', 'dose_semanal', 'low_range', 'high_range']].copy()
+        orig = df[['nome_paciente', 'test_date', 'inr', 'dose_semanal', 'low_range', 'high_range']].copy()
         orig = orig.dropna(subset=['test_date']).reset_index(drop=True)
 
         start = orig['test_date'].min()
@@ -185,11 +184,13 @@ class INRDataManipulation:
 
             # bordas: replicar valor existente
             if prev_row is None:
+                name = next_row['nome_paciente']
                 inr_val = float(next_row['inr'])
                 dose_val = next_row['dose_semanal']
                 low_val = next_row['low_range']
                 high_val = next_row['high_range']
             elif next_row is None:
+                name = next_row['nome_paciente']
                 inr_val = float(prev_row['inr'])
                 dose_val = prev_row['dose_semanal']
                 low_val = prev_row['low_range']
@@ -213,11 +214,13 @@ class INRDataManipulation:
                 inr_val = prev_inr + (next_inr - prev_inr) * fraction
 
                 # repetir dose/low/high a partir do prev (escolha sua preferida)
+                name = next_row['nome_paciente']
                 dose_val = prev_row['dose_semanal']
                 low_val = prev_row['low_range']
                 high_val = prev_row['high_range']
 
-            rows.append({'test_date': d,
+            rows.append({'nome_paciente': name,
+                         'test_date': d,
                          'inr': float(inr_val),
                          'dose_semanal': dose_val,
                          'low_range': low_val,
@@ -227,6 +230,26 @@ class INRDataManipulation:
         # montar DF resultante
         weekly_df = pd.DataFrame(rows)
         weekly_df = weekly_df.sort_values('test_date').reset_index(drop=True)
+
+        # calcular weeks_since_last_real
+        if not weekly_df.empty:
+            last_real_date = None
+            weeks_since = []
+
+            for idx, row in weekly_df.iterrows():
+                if row['generated'] == 0:
+                    last_real_date = row['test_date']
+                    weeks_since.append(0)
+                else:
+                    if last_real_date is None:
+                        weeks_since.append(None)
+                    else:
+                        delta_days = (row['test_date'] - last_real_date).days
+                        weeks_since.append(delta_days // 7)
+
+            weekly_df['weeks_since_last_real'] = weeks_since
+        else:
+            weekly_df['weeks_since_last_real'] = pd.Series(dtype=float)
 
         # recalcular inr_diff = inr_current - inr_previous
         if not weekly_df.empty:
@@ -238,20 +261,19 @@ class INRDataManipulation:
         weekly_df['inr'] = weekly_df['inr'].round(3)
         weekly_df['inr_diff'] = weekly_df['inr_diff'].fillna(0.0).round(3)
 
-        cols_order = ['test_date', 'dose_semanal', 'inr', 'inr_diff', 'low_range', 'high_range', 'generated']
+        cols_order = ['nome_paciente', 'test_date', 'dose_semanal', 'inr', 'inr_diff', 'low_range', 'high_range', 'generated', 'weeks_since_last_real']
         existing_cols = [c for c in cols_order if c in weekly_df.columns]
         weekly_df = weekly_df[existing_cols]
 
-        return weekly_df
+        self.data_weekly = weekly_df
 
     def create_time_features(self, data, date_col="test_date", target_col="inr",
                              lags=[1,2,3,4], roll_windows=[2,4]):
         df = data.copy()
 
         # Features temporais 
-        df['weekofyear'] = df[date_col].dt.isocalendar().week.astype(int)
+        # df['weekofyear'] = df[date_col].dt.isocalendar().week.astype(int)
         df['month'] = df[date_col].dt.month.astype(int)
-        df['year'] = df[date_col].dt.year.astype(int)
 
         # Lags do INR (DEPENDÊNCIA TEMPORAL DO ALVO)
         for lag in lags:
@@ -265,20 +287,8 @@ class INRDataManipulation:
         # Remoção das primeiras linhas sem lags suficientes 
         min_lag = max(lags) if len(lags) > 0 else 0
         features_df = df.iloc[min_lag:].reset_index(drop=True)
-
-        # Seleção das features
-        base_cols_f = ['dose_semanal', 'generated', 'weekofyear', 'month']
-        base_cols_i = ['inr', 'generated', 'weekofyear', 'month']
-
-        lag_cols = [f'inr_lag_{lag}' for lag in lags]
-        roll_cols = [f'inr_roll_mean_{w}' for w in roll_windows]
-
-        feature_cols_f = base_cols_f + lag_cols + roll_cols
-        feature_cols_i = base_cols_i + lag_cols + roll_cols
-        self.features_dose = [c for c in feature_cols_f if c in features_df.columns]
-        self.features_inr = [c for c in feature_cols_i if c in features_df.columns]
         
-        return features_df
+        self.data_final = features_df
 
     # =========================
     # Plot principal
@@ -296,7 +306,7 @@ class INRDataManipulation:
         plt.axhline(y=high, color='red', linestyle='--', alpha=0.5, linewidth=1)
         plt.xlabel("Data do Teste")
         plt.ylabel("Valor de INR")
-        plt.title("Série Temporal do INR ao longo do tempo")
+        plt.title(f"Série Temporal do INR do paciente {self.nome_paciente}")
         plt.grid(True)
         plt.xticks(rotation=45)
         plt.legend()
