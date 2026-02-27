@@ -1463,46 +1463,433 @@ class ModelTrainer:
         plt.show()
     
     def compare_all_models(self):
-        """Compara todos os modelos usando os resultados dos diagnósticos salvos."""
+        """
+        ✅ VERSÃO MELHORADA: Compara todos os modelos usando diagnósticos salvos.
+        
+        Melhorias:
+        - Tratamento robusto de dados faltantes
+        - Validação de estrutura do diagnostics_history
+        - Métricas adicionais de análise
+        - Formatação aprimorada
+        """
         if not self.diagnostics_history:
-            print("⚠️ Nenhum modelo treinado ainda")
+            print("⚠️ Nenhum modelo diagnosticado ainda. Execute diagnose_model() primeiro.")
             return
         
-        # Criamos o DataFrame a partir do histórico
-        df = pd.DataFrame(self.diagnostics_history)
+        # Criar DataFrame a partir do histórico de diagnósticos
+        data_for_df = []
         
-        # Expandimos o dicionário 'diagnostic' em colunas separadas do DataFrame
-        df_diag = df['diagnostic'].apply(pd.Series)
-        df = pd.concat([df.drop(columns=['diagnostic']), df_diag], axis=1)
+        for model_name, diagnostic in self.diagnostics_history.items():
+            row = {'model_name': model_name}
+            row.update(diagnostic)
+            data_for_df.append(row)
+        
+        df = pd.DataFrame(data_for_df)
+        
+        # Adicionar informações de treinamento se disponíveis
+        if self.training_history:
+            training_df = pd.DataFrame(self.training_history)
+            df = df.merge(
+                training_df[['model_name', 'training_time_minutes', 'n_trials', 'best_cv_mae']],
+                on='model_name',
+                how='left'
+            )
+        else:
+            # Criar colunas vazias se não houver histórico de treinamento
+            df['training_time_minutes'] = np.nan
+            df['n_trials'] = np.nan
+            df['best_cv_mae'] = np.nan
         
         # Ordenar por MAE de Teste
-        df = df.sort_values('mae_test')
+        df = df.sort_values('mae_test', ascending=True).reset_index(drop=True)
         
-        print("\n" + "=" * 100)
-        print(f"{'🏆 RANKING FINAL: PERFORMANCE NO CONJUNTO DE TESTE':^100}")
-        print("=" * 100)
+        # ===== CABEÇALHO =====
+        print("\n" + "=" * 120)
+        print(f"{'🏆 RANKING FINAL: PERFORMANCE NO CONJUNTO DE TESTE':^120}")
+        print("=" * 120)
         
-        print(f"{'Modelo':<15} {'MAE Test':<12} {'Gap MAE %':<12} {'R² Test':<12} {'KS p-value':<12} {'Status':<15}")
-        print("-" * 100)
+        # ===== TABELA PRINCIPAL =====
+        print(f"\n{'Pos':<5} {'Modelo':<15} {'MAE Test':<12} {'Gap %':<10} "
+            f"{'RMSE Test':<12} {'R² Test':<10} {'KS p-val':<10} {'Status':<20}")
+        print("-" * 120)
         
         for idx, row in df.iterrows():
-            # Lógica simples de status baseada no Gap e KS
-            status = "✅ OK"
-            if row['mae_gap_percent'] > 15: status = "⚠️ Overfit"
-            if row['ks_test_pvalue'] < 0.05: status = "🚨 Data Drift"
+            # ✅ Classificação de status baseada em múltiplos critérios
+            status = []
+            status_emoji = "✅"
             
-            print(f"{row['model_name']:<15} {row['mae_test']:<12.6f} "
-                f"{row['mae_gap_percent']:>10.2f}%   "
-                f"{row['r2_test']:<12.4f} "
-                f"{row['ks_test_pvalue']:<12.4f} "
-                f"{status:<15}")
+            # Critério 1: Overfitting (Gap de MAE)
+            if row['mae_gap_percent'] > 50:
+                status.append("Overfit Severo")
+                status_emoji = "🚨"
+            elif row['mae_gap_percent'] > 30:
+                status.append("Overfit Alto")
+                status_emoji = "❌"
+            elif row['mae_gap_percent'] > 15:
+                status.append("Overfit Moderado")
+                status_emoji = "⚠️"
+            else:
+                status.append("OK")
+            
+            # Critério 2: Data Drift (KS Test)
+            if row['ks_test_pvalue'] < 0.01:
+                status.append("Drift Severo")
+                status_emoji = "🚨"
+            elif row['ks_test_pvalue'] < 0.05:
+                status.append("Drift Detectado")
+                if status_emoji == "✅":
+                    status_emoji = "⚠️"
+            
+            # Critério 3: Features suspeitas
+            n_suspicious = len(row['suspicious_features']) if isinstance(row['suspicious_features'], list) else 0
+            if n_suspicious > 0:
+                status.append(f"{n_suspicious} Feature(s) Suspeita(s)")
+                if status_emoji == "✅":
+                    status_emoji = "⚠️"
+            
+            # Critério 4: Performance (R²)
+            if row['r2_test'] < 0.3:
+                status.append("R² Baixo")
+                if status_emoji == "✅":
+                    status_emoji = "⚠️"
+            
+            status_str = " | ".join(status) if len(status) > 1 else status[0]
+            
+            print(f"{idx+1:<5} {row['model_name']:<15} {row['mae_test']:<12.6f} "
+                f"{row['mae_gap_percent']:>8.2f}%  "
+                f"{row['rmse_test']:<12.6f} {row['r2_test']:<10.4f} "
+                f"{row['ks_test_pvalue']:<10.4f} {status_emoji} {status_str:<18}")
         
-        print("-" * 100)
+        print("-" * 120)
+        
+        # ===== RESUMO DO MELHOR MODELO =====
         best = df.iloc[0]
-        print(f"🥇 MELHOR MODELO: {best['model_name']} | MAE: {best['mae_test']:.6f}")
+        print(f"\n{'🥇 MELHOR MODELO':^120}")
+        print("-" * 120)
+        print(f"Modelo:              {best['model_name']}")
+        print(f"MAE (Test):          {best['mae_test']:.6f}")
+        print(f"RMSE (Test):         {best['rmse_test']:.6f}")
+        print(f"R² (Test):           {best['r2_test']:.4f}")
+        print(f"Gap MAE:             {best['mae_gap_percent']:.2f}%")
+        print(f"Gap RMSE:            {best['rmse_gap_percent']:.2f}%")
+        print(f"KS Test p-value:     {best['ks_test_pvalue']:.4f}")
         
-        # Chamar o novo plot detalhado passando o DataFrame processado
-        self._plot_model_comparison_v2(df)
+        if 'training_time_minutes' in best and pd.notna(best['training_time_minutes']):
+            print(f"Tempo de treino:     {best['training_time_minutes']:.2f} minutos")
+        if 'best_cv_mae' in best and pd.notna(best['best_cv_mae']):
+            print(f"MAE (CV):            {best['best_cv_mae']:.6f}")
+        
+        # ===== ANÁLISE DE PROBLEMAS =====
+        print(f"\n{'⚠️ ANÁLISE DE PROBLEMAS':^120}")
+        print("-" * 120)
+        
+        # Overfitting
+        overfit_models = df[df['mae_gap_percent'] > 15]
+        if not overfit_models.empty:
+            print(f"\n🔴 Modelos com Overfitting (Gap > 15%):")
+            for _, row in overfit_models.iterrows():
+                print(f"   • {row['model_name']:<15} Gap: {row['mae_gap_percent']:>6.2f}%")
+        else:
+            print("\n✅ Nenhum modelo com overfitting significativo")
+        
+        # Data Drift
+        drift_models = df[df['ks_test_pvalue'] < 0.05]
+        if not drift_models.empty:
+            print(f"\n🔴 Modelos com Data Drift (p-value < 0.05):")
+            for _, row in drift_models.iterrows():
+                print(f"   • {row['model_name']:<15} p-value: {row['ks_test_pvalue']:.4f}")
+        else:
+            print("\n✅ Nenhum modelo com data drift detectado")
+        
+        # Features Suspeitas
+        models_with_leakage = df[df['suspicious_features'].apply(lambda x: len(x) if isinstance(x, list) else 0) > 0]
+        if not models_with_leakage.empty:
+            print(f"\n🔴 Modelos com Features Suspeitas de Leakage:")
+            for _, row in models_with_leakage.iterrows():
+                n_suspicious = len(row['suspicious_features'])
+                print(f"   • {row['model_name']:<15} {n_suspicious} feature(s) com correlação > 0.95")
+                if isinstance(row['suspicious_features'], list):
+                    for feat, corr in row['suspicious_features'][:3]:  # Mostrar top 3
+                        print(f"       - {feat}: {corr:.4f}")
+        else:
+            print("\n✅ Nenhuma feature suspeita de leakage detectada")
+        
+        print("=" * 120 + "\n")
+        
+        # ===== GERAR VISUALIZAÇÕES =====
+        self._plot_model_comparison(df)
+
+    def _plot_model_comparison(self, df: pd.DataFrame):
+        """
+        ✅ VERSÃO MELHORADA: Visualização avançada e completa.
+        
+        Melhorias:
+        - 8 gráficos em vez de 6
+        - Cores contextuais (verde/amarelo/vermelho)
+        - Anotações de valores
+        - Grid para facilitar leitura
+        - Tratamento de valores NaN
+        """
+        
+        # Criar figura com 8 subplots (2 linhas x 4 colunas)
+        fig = plt.figure(figsize=(20, 12))
+        gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
+        
+        fig.suptitle('🏆 Análise Comparativa Completa de Modelos', 
+                    fontsize=18, fontweight='bold', y=0.98)
+        
+        models = df['model_name'].values
+        x_pos = np.arange(len(models))
+        
+        # ===== 1. MAE: Train vs Test =====
+        ax1 = fig.add_subplot(gs[0, 0])
+        width = 0.35
+        bars1 = ax1.bar(x_pos - width/2, df['mae_train'], width, 
+                        label='Train', color='#3498db', alpha=0.8)
+        bars2 = ax1.bar(x_pos + width/2, df['mae_test'], width, 
+                        label='Test', color='#e74c3c', alpha=0.8)
+        
+        ax1.set_xlabel('Modelo', fontsize=10)
+        ax1.set_ylabel('MAE', fontsize=10)
+        ax1.set_title('MAE: Treino vs Teste', fontsize=11, fontweight='bold')
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(models, rotation=45, ha='right', fontsize=9)
+        ax1.legend(fontsize=9)
+        ax1.grid(True, alpha=0.3, axis='y')
+        
+        # Adicionar valores nas barras
+        for bar in bars2:
+            height = bar.get_height()
+            ax1.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+        
+        # ===== 2. Gap de Overfitting (%) =====
+        ax2 = fig.add_subplot(gs[0, 1])
+        
+        # Cores baseadas em thresholds
+        colors = []
+        for gap in df['mae_gap_percent']:
+            if gap < 10:
+                colors.append('#2ecc71')  # Verde
+            elif gap < 30:
+                colors.append('#f39c12')  # Laranja
+            else:
+                colors.append('#e74c3c')  # Vermelho
+        
+        bars = ax2.bar(models, df['mae_gap_percent'], color=colors, alpha=0.7, edgecolor='black')
+        ax2.axhline(10, color='green', linestyle='--', alpha=0.5, linewidth=1, label='Ótimo (10%)')
+        ax2.axhline(30, color='red', linestyle='--', alpha=0.5, linewidth=1, label='Crítico (30%)')
+        
+        ax2.set_xlabel('Modelo', fontsize=10)
+        ax2.set_ylabel('Gap (%)', fontsize=10)
+        ax2.set_title('Gap de MAE - Indicador de Overfitting', fontsize=11, fontweight='bold')
+        ax2.set_xticklabels(models, rotation=45, ha='right', fontsize=9)
+        ax2.legend(fontsize=8)
+        ax2.grid(True, alpha=0.3, axis='y')
+        
+        # Adicionar valores
+        for bar, gap in zip(bars, df['mae_gap_percent']):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{gap:.1f}%', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        # ===== 3. R² Score: Train vs Test =====
+        ax3 = fig.add_subplot(gs[0, 2])
+        
+        ax3.plot(models, df['r2_train'], marker='o', linewidth=2, 
+                markersize=8, label='Train', color='#3498db')
+        ax3.plot(models, df['r2_test'], marker='s', linewidth=2, 
+                markersize=8, label='Test', color='#e74c3c')
+        
+        ax3.set_xlabel('Modelo', fontsize=10)
+        ax3.set_ylabel('R²', fontsize=10)
+        ax3.set_title('R² Score (Train vs Test)', fontsize=11, fontweight='bold')
+        ax3.set_xticklabels(models, rotation=45, ha='right', fontsize=9)
+        ax3.set_ylim([max(0, df['r2_test'].min() - 0.1), 
+                    min(1.0, df['r2_test'].max() + 0.05)])
+        ax3.legend(fontsize=9)
+        ax3.grid(True, alpha=0.3)
+        
+        # ===== 4. RMSE: Train vs Test =====
+        ax4 = fig.add_subplot(gs[0, 3])
+        
+        bars1 = ax4.bar(x_pos - width/2, df['rmse_train'], width, 
+                        label='Train', color='#9b59b6', alpha=0.8)
+        bars2 = ax4.bar(x_pos + width/2, df['rmse_test'], width, 
+                        label='Test', color='#e67e22', alpha=0.8)
+        
+        ax4.set_xlabel('Modelo', fontsize=10)
+        ax4.set_ylabel('RMSE', fontsize=10)
+        ax4.set_title('RMSE: Treino vs Teste', fontsize=11, fontweight='bold')
+        ax4.set_xticks(x_pos)
+        ax4.set_xticklabels(models, rotation=45, ha='right', fontsize=9)
+        ax4.legend(fontsize=9)
+        ax4.grid(True, alpha=0.3, axis='y')
+        
+        # ===== 5. Tempo de Treinamento =====
+        ax5 = fig.add_subplot(gs[1, 0])
+        
+        if 'training_time_minutes' in df.columns and not df['training_time_minutes'].isna().all():
+            # Cores baseadas no tempo
+            times = df['training_time_minutes'].fillna(0)
+            colors_time = plt.cm.YlOrRd(times / times.max())
+            
+            bars = ax5.barh(models, times, color=colors_time, edgecolor='black')
+            ax5.set_xlabel('Minutos', fontsize=10)
+            ax5.set_title('Tempo de Treinamento', fontsize=11, fontweight='bold')
+            ax5.invert_yaxis()
+            
+            # Adicionar valores
+            for bar, time in zip(bars, times):
+                width = bar.get_width()
+                if time > 0:
+                    ax5.text(width, bar.get_y() + bar.get_height()/2.,
+                            f' {time:.1f}m', va='center', fontsize=8)
+        else:
+            ax5.text(0.5, 0.5, 'Dados de tempo\nnão disponíveis', 
+                    ha='center', va='center', transform=ax5.transAxes, fontsize=10)
+            ax5.set_title('Tempo de Treinamento', fontsize=11, fontweight='bold')
+        
+        # ===== 6. KS Test p-value (Estabilidade) =====
+        ax6 = fig.add_subplot(gs[1, 1])
+        
+        # Cores baseadas em significância
+        colors_ks = []
+        for p_val in df['ks_test_pvalue']:
+            if p_val >= 0.05:
+                colors_ks.append('#2ecc71')  # Verde - distribuições similares
+            elif p_val >= 0.01:
+                colors_ks.append('#f39c12')  # Laranja - diferença moderada
+            else:
+                colors_ks.append('#e74c3c')  # Vermelho - diferença significativa
+        
+        bars = ax6.bar(models, df['ks_test_pvalue'], color=colors_ks, 
+                    alpha=0.7, edgecolor='black')
+        ax6.axhline(0.05, color='red', linestyle='--', alpha=0.7, 
+                    linewidth=2, label='α = 0.05')
+        ax6.axhline(0.01, color='darkred', linestyle='--', alpha=0.7, 
+                    linewidth=2, label='α = 0.01')
+        
+        ax6.set_xlabel('Modelo', fontsize=10)
+        ax6.set_ylabel('p-value', fontsize=10)
+        ax6.set_title('KS Test - Similaridade Train vs Test', fontsize=11, fontweight='bold')
+        ax6.set_xticklabels(models, rotation=45, ha='right', fontsize=9)
+        ax6.legend(fontsize=8)
+        ax6.grid(True, alpha=0.3, axis='y')
+        
+        # Adicionar anotação
+        ax6.text(0.98, 0.98, 'p > 0.05: Distribuições similares ✅\np < 0.05: Data drift ⚠️',
+                transform=ax6.transAxes, fontsize=8, ha='right', va='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
+        # ===== 7. Ranking por MAE (Test) =====
+        ax7 = fig.add_subplot(gs[1, 2])
+        
+        df_sorted = df.sort_values('mae_test', ascending=False)
+        
+        # Cores para ranking (ouro, prata, bronze, outros)
+        colors_rank = []
+        for i in range(len(df_sorted)):
+            if i == len(df_sorted) - 1:  # Primeiro lugar (invertido porque está de baixo pra cima)
+                colors_rank.append('#FFD700')  # Ouro
+            elif i == len(df_sorted) - 2:
+                colors_rank.append('#C0C0C0')  # Prata
+            elif i == len(df_sorted) - 3:
+                colors_rank.append('#CD7F32')  # Bronze
+            else:
+                colors_rank.append('#95a5a6')  # Cinza
+        
+        bars = ax7.barh(df_sorted['model_name'], df_sorted['mae_test'], 
+                        color=colors_rank, edgecolor='black', alpha=0.8)
+        ax7.set_xlabel('MAE (Test)', fontsize=10)
+        ax7.set_title('🏆 Ranking Final por MAE', fontsize=11, fontweight='bold')
+        ax7.invert_yaxis()
+        
+        # Adicionar medalhas e valores
+        for i, (bar, mae) in enumerate(zip(bars, df_sorted['mae_test'])):
+            width = bar.get_width()
+            rank = len(df_sorted) - i
+            
+            # Medalha
+            if rank == 1:
+                medal = "🥇"
+            elif rank == 2:
+                medal = "🥈"
+            elif rank == 3:
+                medal = "🥉"
+            else:
+                medal = f"{rank}º"
+            
+            ax7.text(width, bar.get_y() + bar.get_height()/2.,
+                    f' {mae:.4f} {medal}', va='center', fontsize=9, fontweight='bold')
+        
+        # ===== 8. Mapa de Calor - Métricas Normalizadas =====
+        ax8 = fig.add_subplot(gs[1, 3])
+        
+        # Selecionar métricas para o heatmap
+        metrics = ['mae_test', 'rmse_test', 'mae_gap_percent', 'r2_test']
+        metrics_available = [m for m in metrics if m in df.columns]
+        
+        if metrics_available:
+            # Normalizar métricas (0-1)
+            df_norm = df[['model_name'] + metrics_available].copy()
+            
+            for col in metrics_available:
+                if col == 'r2_test':
+                    # R² maior é melhor - não inverter
+                    df_norm[col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
+                else:
+                    # Outras métricas: menor é melhor - inverter
+                    df_norm[col] = 1 - ((df[col] - df[col].min()) / (df[col].max() - df[col].min()))
+            
+            # Criar matriz para heatmap
+            heatmap_data = df_norm[metrics_available].values.T
+            
+            im = ax8.imshow(heatmap_data, cmap='RdYlGn', aspect='auto', vmin=0, vmax=1)
+            
+            # Configurar eixos
+            ax8.set_xticks(np.arange(len(models)))
+            ax8.set_yticks(np.arange(len(metrics_available)))
+            ax8.set_xticklabels(models, rotation=45, ha='right', fontsize=9)
+            
+            # Labels mais descritivos
+            metric_labels = {
+                'mae_test': 'MAE Test',
+                'rmse_test': 'RMSE Test',
+                'mae_gap_percent': 'Gap MAE %',
+                'r2_test': 'R² Test'
+            }
+            ax8.set_yticklabels([metric_labels.get(m, m) for m in metrics_available], fontsize=9)
+            
+            ax8.set_title('Mapa de Performance\n(Verde=Melhor, Vermelho=Pior)', 
+                        fontsize=11, fontweight='bold')
+            
+            # Adicionar valores nas células
+            for i in range(len(metrics_available)):
+                for j in range(len(models)):
+                    value = heatmap_data[i, j]
+                    color = 'white' if value < 0.5 else 'black'
+                    ax8.text(j, i, f'{value:.2f}',
+                            ha="center", va="center", color=color, fontsize=8)
+            
+            # Colorbar
+            cbar = plt.colorbar(im, ax=ax8, fraction=0.046, pad=0.04)
+            cbar.set_label('Score Normalizado', fontsize=9)
+        else:
+            ax8.text(0.5, 0.5, 'Dados insuficientes\npara heatmap', 
+                    ha='center', va='center', transform=ax8.transAxes, fontsize=10)
+            ax8.set_title('Mapa de Performance', fontsize=11, fontweight='bold')
+        
+        # ===== RODAPÉ COM INFORMAÇÕES =====
+        footer_text = f"""
+        📊 Total de modelos: {len(df)} | 🥇 Melhor: {df.iloc[0]['model_name']} (MAE: {df.iloc[0]['mae_test']:.6f})
+        ⚠️ Legenda Gap: Verde (<10%) = Ótimo | Laranja (10-30%) = Moderado | Vermelho (>30%) = Crítico
+        """
+        
+        fig.text(0.5, 0.01, footer_text, ha='center', fontsize=9,
+                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.3))
+        
+        plt.show()
 
     def _plot_model_comparison_v2(self, df: pd.DataFrame):
         """Visualização avançada baseada nos resultados do diagnóstico."""
