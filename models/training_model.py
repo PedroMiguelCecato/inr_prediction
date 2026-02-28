@@ -23,13 +23,6 @@ import optuna
 from optuna.samplers import TPESampler
 from optuna.pruners import MedianPruner
 
-"""
-# Forças todos os prints
-import builtins
-import functools
-
-print = functools.partial(builtins.print, flush=True)"""
-
 warnings.filterwarnings('ignore')
 
 
@@ -648,23 +641,6 @@ class ModelTrainer:
             self.plot_optimization_results(study, model_name="RandomForest")
         
         return best_params, final_model, study
-    
-
-        #     Normalizar dados
-        # self.scaler = StandardScaler()
-        # X_train_scaled = pd.DataFrame(
-        #     self.scaler.fit_transform(self.X_train),
-        #     columns=self.X_train.columns,
-        #     index=self.X_train.index
-        # )
-
-        #      Criar modelo e avaliar
-        # model = ElasticNet(**params)
-        # mean_score, std_score = self._calculate_cv_score(model, X=X_train_scaled)
-
-        #    Treinar modelo final
-        # final_model = ElasticNet(**best_params)
-        # final_model.fit(X_train_scaled, self.y_train)
 
     # ========================================================================
     # ELASTICNET TRAINING
@@ -698,7 +674,7 @@ class ModelTrainer:
             print("=" * 70)
             print(f"🎯 Número de trials: {n_trials}")
             print(f"⏱️ Timeout: {timeout if timeout else 'Sem limite'} segundos")
-            print("⚠️ ATENÇÃO: ElasticNet requer normalização dos dados")
+            print("⚠️ ATENÇÃO: ElasticNet trabalha com a normalização dos dados")
             print("=" * 70 + "\n")
         
         # Definir função objetivo
@@ -784,7 +760,6 @@ class ModelTrainer:
         
         model_inner = final_model.named_steps['model']
         n_features_nonzero = np.sum(model_inner.coef_ != 0)
-        # n_features_nonzero = np.sum(final_model.coef_ != 0)
         reg_type = study.best_trial.user_attrs.get('regularization_type', 'N/A')
         
         # Mostrar resultados
@@ -798,7 +773,6 @@ class ModelTrainer:
             print(f"📊 Features selecionadas: {n_features_nonzero}/{len(self.X_train.columns)}")
             print(f"📊 Tipo de regularização: {reg_type}")
             print(f"🔁 Iterações para convergência: {model_inner.n_iter_}")
-            # print(f"🔁 Iterações para convergência: {final_model.n_iter_}")
             print()
         
         # Plotar resultados
@@ -807,8 +781,8 @@ class ModelTrainer:
             # Passamos o modelo interno para a função de plot de coeficientes
             self._plot_elasticnet_coefficients(model_inner)
         
-        return best_params, final_model, study  
         # Retornamos o final_model (que já contém o scaler internamente!)
+        return best_params, final_model, study  
     
     def _plot_elasticnet_coefficients(self, model: ElasticNet, top_n: int = 20):
         """Plota coeficientes do ElasticNet."""
@@ -928,20 +902,8 @@ class ModelTrainer:
                 results['RandomForest'] = (params, model, study)
             except Exception as e:
                 print(f"❌ Erro ao treinar Random Forest: {e}")
-        
-        """
-        if 'elasticnet' in n_trials_dict:
-            try:
-                params, model, study, scaler = self.train_elasticnet(
-                    n_trials=n_trials_dict['elasticnet'],
-                    timeout=timeout,
-                    plot_results=plot_individual
-                )
-                results['ElasticNet'] = (params, model, study, scaler)
-            except Exception as e:
-                print(f"❌ Erro ao treinar ElasticNet: {e}")"""
 
-        # ElasticNet - Agora padronizado com 3 retornos
+        # ElasticNet 
         if 'elasticnet' in n_trials_dict:
             try:
                 # O model aqui já é um Pipeline(Scaler + ElasticNet)
@@ -971,148 +933,6 @@ class ModelTrainer:
     # ========================================================================
     # MÉTODO DE DIAGNÓSTICO
     # ========================================================================
-    """
-    def diagnose_model(self, 
-                      model: Any,
-                      X_test: pd.DataFrame,
-                      y_test: pd.Series,
-                      model_name: str = "Modelo",
-                      scaler: Optional[StandardScaler] = None) -> Dict:
-        
-        print("\n" + "="*80)
-        print(f"🔍 DIAGNÓSTICO COMPLETO - {model_name}")
-        print("="*80)
-        
-        # Preparar dados
-        X_train_eval = self.X_train if scaler is None else pd.DataFrame(
-            scaler.transform(self.X_train),
-            columns=self.X_train.columns,
-            index=self.X_train.index
-        )
-        X_test_eval = X_test if scaler is None else pd.DataFrame(
-            scaler.transform(X_test),
-            columns=X_test.columns,
-            index=X_test.index
-        )
-        
-        # 1. Previsões
-        y_pred_train = model.predict(X_train_eval)
-        y_pred_test = model.predict(X_test_eval)
-        
-        mae_train = mean_absolute_error(self.y_train, y_pred_train)
-        mae_test = mean_absolute_error(y_test, y_pred_test)
-        rmse_train = np.sqrt(mean_squared_error(self.y_train, y_pred_train))
-        rmse_test = np.sqrt(mean_squared_error(y_test, y_pred_test))
-        r2_train = r2_score(self.y_train, y_pred_train)
-        r2_test = r2_score(y_test, y_pred_test)
-        
-        print("\n📊 MÉTRICAS")
-        print(f"MAE Train:  {mae_train:.4f}")
-        print(f"MAE Test:   {mae_test:.4f}")
-        print(f"Gap MAE:    {((mae_test - mae_train)/mae_train * 100):+.2f}%")
-        print(f"\nRMSE Train: {rmse_train:.4f}")
-        print(f"RMSE Test:  {rmse_test:.4f}")
-        print(f"Gap RMSE:   {((rmse_test - rmse_train)/rmse_train * 100):+.2f}%")
-        print(f"\nR² Train:   {r2_train:.4f}")
-        print(f"R² Test:    {r2_test:.4f}")
-        
-        # ✅ Diagnóstico de overfitting
-        mae_gap = ((mae_test - mae_train)/mae_train * 100)
-        if mae_gap < 5:
-            print("\n✅ Modelo bem generalizado (gap < 5%)")
-        elif mae_gap < 15:
-            print("\n⚠️ Leve overfitting (5% < gap < 15%)")
-        elif mae_gap < 50:
-            print("\n❌ Overfitting moderado (15% < gap < 50%)")
-        else:
-            print("\n🚨 OVERFITTING SEVERO (gap > 50%) - Possível data leakage!")
-        
-        # 2. Análise de erros
-        errors_train = np.abs(self.y_train - y_pred_train)
-        errors_test = np.abs(y_test - y_pred_test)
-        
-        print("\n📊 ANÁLISE DE ERROS")
-        print(f"Erro médio Train:   {errors_train.mean():.4f}")
-        print(f"Erro médio Test:    {errors_test.mean():.4f}")
-        print(f"Erro máximo Train:  {errors_train.max():.4f}")
-        print(f"Erro máximo Test:   {errors_test.max():.4f}")
-        print(f"% erros > 5 (Train): {(errors_train > 5).sum() / len(errors_train) * 100:.1f}%")
-        print(f"% erros > 5 (Test):  {(errors_test > 5).sum() / len(errors_test) * 100:.1f}%")
-        
-        # 3. Distribuição do target
-        print("\n📊 DISTRIBUIÇÃO DO TARGET")
-        print(f"Train - Mean: {self.y_train.mean():.4f}, Std: {self.y_train.std():.4f}, "
-              f"Range: [{self.y_train.min():.2f}, {self.y_train.max():.2f}]")
-        print(f"Test  - Mean: {y_test.mean():.4f}, Std: {y_test.std():.4f}, "
-              f"Range: [{y_test.min():.2f}, {y_test.max():.2f}]")
-        
-        # ✅ Teste estatístico
-        ks_stat, ks_pvalue = ks_2samp(self.y_train, y_test)
-        print(f"\nKolmogorov-Smirnov test p-value: {ks_pvalue:.4f}")
-        if ks_pvalue < 0.05:
-            print("⚠️ ALERTA: Distribuições de treino e teste são SIGNIFICATIVAMENTE diferentes!")
-        else:
-            print("✅ Distribuições de treino e teste são similares")
-        
-        # 4. Features suspeitas de leakage
-        print("\n🚨 VERIFICAÇÃO DE DATA LEAKAGE")
-        suspicious_features = []
-        
-        for col in self.X_train.columns:
-            try:
-                corr_train = np.corrcoef(self.X_train[col], self.y_train)[0, 1]
-                
-                if abs(corr_train) > 0.95:
-                    suspicious_features.append((col, corr_train))
-                    print(f"  ⚠️ {col}: correlação = {corr_train:.4f} (MUITO ALTA - possível leakage!)")
-            except:
-                continue
-        
-        if not suspicious_features:
-            print("  ✅ Nenhuma feature com correlação suspeita encontrada")
-        
-        # 5. Feature importance (se disponível)
-        if hasattr(model, 'feature_importances_'):
-            print("\n📊 TOP 10 FEATURES MAIS IMPORTANTES")
-            importances = pd.DataFrame({
-                'feature': self.X_train.columns,
-                'importance': model.feature_importances_
-            }).sort_values('importance', ascending=False).head(10)
-            
-            for idx, row in importances.iterrows():
-                print(f"  {row['feature']:<30} {row['importance']:.4f}")
-        
-        # 6. Gráficos
-        self._plot_diagnostic_charts(
-            self.y_train, y_pred_train, 
-            y_test, y_pred_test,
-            errors_train, errors_test,
-            model_name
-        )
-        
-        print("\n" + "="*80)
-        
-        # Salvar diagnóstico
-        diagnostic_result = {
-            'mae_train': mae_train,
-            'mae_test': mae_test,
-            'rmse_train': rmse_train,
-            'rmse_test': rmse_test,
-            'r2_train': r2_train,
-            'r2_test': r2_test,
-            'mae_gap_percent': mae_gap,
-            'rmse_gap_percent': ((rmse_test - rmse_train)/rmse_train * 100),
-            'suspicious_features': suspicious_features,
-            'ks_test_pvalue': ks_pvalue
-        }
-        
-        self.diagnostics_history[model_name] = diagnostic_result
-        
-        return diagnostic_result
-    
-    
-    """
-
     def diagnose_model(self, 
                    model: Any,
                    X_test: pd.DataFrame,
@@ -1463,15 +1283,7 @@ class ModelTrainer:
         plt.show()
     
     def compare_all_models(self):
-        """
-        ✅ VERSÃO MELHORADA: Compara todos os modelos usando diagnósticos salvos.
-        
-        Melhorias:
-        - Tratamento robusto de dados faltantes
-        - Validação de estrutura do diagnostics_history
-        - Métricas adicionais de análise
-        - Formatação aprimorada
-        """
+        """Compara todos os modelos usando diagnósticos salvos."""
         if not self.diagnostics_history:
             print("⚠️ Nenhum modelo diagnosticado ainda. Execute diagnose_model() primeiro.")
             return
@@ -1620,16 +1432,7 @@ class ModelTrainer:
         self._plot_model_comparison(df)
 
     def _plot_model_comparison(self, df: pd.DataFrame):
-        """
-        ✅ VERSÃO MELHORADA: Visualização avançada e completa.
-        
-        Melhorias:
-        - 8 gráficos em vez de 6
-        - Cores contextuais (verde/amarelo/vermelho)
-        - Anotações de valores
-        - Grid para facilitar leitura
-        - Tratamento de valores NaN
-        """
+        """Visualização avançada comparativa dos modelos."""
         
         # Criar figura com 8 subplots (2 linhas x 4 colunas)
         fig = plt.figure(figsize=(20, 12))
@@ -1937,80 +1740,6 @@ class ModelTrainer:
         
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         plt.show()
-
-    """
-    def compare_all_models(self):
-        
-        if not self.training_history:
-            print("⚠️ Nenhum modelo treinado ainda")
-            return
-        
-        df = pd.DataFrame(self.training_history)
-        df = df.sort_values('best_cv_mae')
-        
-        print("\n" + "=" * 90)
-        print("🏆 COMPARAÇÃO DE TODOS OS MODELOS")
-        print("=" * 90)
-        
-        print(f"\n{'Modelo':<15} {'MAE (CV)':<12} {'Tempo (min)':<12} {'Trials':<10} {'Data/Hora':<20}")
-        print("-" * 90)
-        
-        for idx, row in df.iterrows():
-            print(f"{row['model_name']:<15} {row['best_cv_mae']:<12.6f} "
-                  f"{row['training_time_minutes']:<12.2f} "
-                  f"{row['n_completed_trials']}/{row['n_trials']:<7} "
-                  f"{row['timestamp'].strftime('%Y-%m-%d %H:%M:%S'):<20}")
-        
-        print("-" * 90)
-        best_model = df.iloc[0]
-        print(f"\n🥇 MELHOR MODELO: {best_model['model_name']}")
-        print(f"📊 MAE (CV): {best_model['best_cv_mae']:.6f}")
-        print(f"⏱️ Tempo de treinamento: {best_model['training_time_minutes']:.2f} minutos")
-        
-        # Calcular diferença percentual entre melhor e segundo melhor
-        if len(df) > 1:
-            second_best = df.iloc[1]
-            improvement = ((second_best['best_cv_mae'] - best_model['best_cv_mae']) / 
-                          second_best['best_cv_mae'] * 100)
-            print(f"📈 Melhoria sobre 2º lugar ({second_best['model_name']}): {improvement:.2f}%")
-        
-        print("=" * 90 + "\n")
-        
-        # Plotar comparação visual
-        self._plot_model_comparison(df)
-        
-        
-    def _plot_model_comparison(self, df: pd.DataFrame):
-        
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-        
-        # 1. MAE por modelo
-        ax1 = axes[0]
-        colors = ['green' if i == 0 else 'skyblue' for i in range(len(df))]
-        bars = ax1.barh(df['model_name'], df['best_cv_mae'], color=colors)
-        ax1.set_xlabel('MAE (Cross-Validation)', fontsize=11)
-        ax1.set_title('Comparação de MAE entre Modelos', fontsize=12, fontweight='bold')
-        ax1.invert_yaxis()
-        
-        # Adicionar valores nas barras
-        for bar, mae in zip(bars, df['best_cv_mae']):
-            ax1.text(bar.get_width(), bar.get_y() + bar.get_height()/2,
-                    f' {mae:.6f}', va='center', fontsize=9)
-        
-        # 2. Tempo de treinamento
-        ax2 = axes[1]
-        ax2.barh(df['model_name'], df['training_time_minutes'], color='coral')
-        ax2.set_xlabel('Tempo de Treinamento (minutos)', fontsize=11)
-        ax2.set_title('Tempo de Treinamento por Modelo', fontsize=12, fontweight='bold')
-        ax2.invert_yaxis()
-        
-        for i, (idx, row) in enumerate(df.iterrows()):
-            ax2.text(row['training_time_minutes'], i,
-                    f" {row['training_time_minutes']:.1f} min", 
-                    va='center', fontsize=9)
-        
-        plt.tight_layout()
-        plt.show()"""
     
     def get_training_history(self) -> pd.DataFrame:
         """Retorna histórico de treinamentos como DataFrame."""
