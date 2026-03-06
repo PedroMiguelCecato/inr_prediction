@@ -164,7 +164,6 @@ inr_data = INRDataManipulation(
 
 # Obter dados processados
 data_final = inr_data.get_data_final()
-nome_paciente = inr_data.get_nome_paciente()
 ```
 
 **Recursos:**
