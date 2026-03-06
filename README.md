@@ -175,7 +175,7 @@ from data_manipulation import INRDataManipulation
 - ✅ Visualização e tratamento dos dados
 
 ### 🤖 3. Treinamento com Machine Learning
-```mermaid
+```python
 from training_model import ModelTrainer
 ```
 
