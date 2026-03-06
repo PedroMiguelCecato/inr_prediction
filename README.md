@@ -7,10 +7,10 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Em%20Desenvolvimento-yellow.svg)]()
 
-Desenvolvido por **Pedro Cecato**
-Fornecimento de dados e informações médicas **Ivson**
-Coordenado pelo professor **Zildomar**
-**[LabTEVE](http://www.de.ufpb.br/~labteve/)**
+Desenvolvido por **Pedro Cecato**<br>
+Fornecimento de dados e informações médicas **Ivson**<br>
+Coordenado pelo professor **Zildomar**<br>
+**[LabTEVE](http://www.de.ufpb.br/~labteve/)**<br>
 *Laboratório de Tecnologia para o Ensino Virtual e Estatística*  
 *Universidade Federal da Paraíba (UFPB)*
 
