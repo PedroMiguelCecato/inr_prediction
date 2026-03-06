@@ -39,7 +39,7 @@ Coordenado pelo professor **Zildomar**<br>
 
 ## 🎯 Sobre o Projeto
 
-O **Sistema de Predição de INR** é uma plataforma baseada em Machine Learning desenvolvida pelo **LabTEVE** (Laboratório de Tecnologia para o Ensino Virtual e Estatística) da **Universidade Federal do Cariri (UFCA)** para auxiliar profissionais de saúde na **dosagem personalizada de varfarina** em pacientes anticoagulados.
+O **Sistema de Predição de INR** é uma plataforma baseada em Machine Learning desenvolvida para auxiliar profissionais de saúde na **dosagem personalizada de varfarina** em pacientes anticoagulados.
 
 ### 🏥 Contexto Clínico
 
