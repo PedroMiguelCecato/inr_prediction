@@ -185,40 +185,12 @@ from training_model import ModelTrainer
 - 🌲 **Random Forest** - Ensemble de árvores
 - 📏 **ElasticNet** - Regressão linear regularizada
 
-### 🎯 4. Otimização Automática de Hiperparâmetros
-```python
-# Otuna com TPE Sampler e MedianPruner
-study = trainer.train_lightgbm(
-    n_trials=100,
-    timeout=3600,
-    plot_results=True
-)
-
-# Análise de importância de hiperparâmetros
-param_importance = optuna.importance.get_param_importances(study)
-```
-
-**Recursos:**
-- ✅ **TPE Sampler** (Tree-structured Parzen Estimator)
-- ✅ **MedianPruner** para interromper trials ruins
+**Otimização Automática de Hiperparâmetros:**
 - ✅ **Validação cruzada** temporal (TimeSeriesSplit)
 - ✅ **Penalização de variância** nos scores
 - ✅ **Visualizações** automáticas de otimização
 
-### 🔍 5. Diagnóstico e Validação
-```python
-# Diagnóstico completo do modelo
-diagnostics = trainer.diagnose_model(model, X_test, y_test, "XGBoost")
-
-# Verificações automáticas:
-# ✅ Overfitting (gap treino/teste)
-# ✅ Data drift (KS test)
-# ✅ Data leakage (correlações suspeitas)
-# ✅ Feature importance
-# ✅ Distribuição de erros
-```
-
-**Métricas Monitoradas:**
+**Diagnóstico e Validação:**
 - 📊 MAE (Mean Absolute Error)
 - 📊 RMSE (Root Mean Squared Error)
 - 📊 R² Score
@@ -227,18 +199,7 @@ diagnostics = trainer.diagnose_model(model, X_test, y_test, "XGBoost")
 
 ### 💾 6. Salvamento e Versionamento
 ```python
-# Salvar modelo treinado
-saved_files = trainer.save_model(
-    model_name="XGBoost",
-    output_dir="models/production",
-    compress=True
-)
-
-# Carregar modelo para produção
-model, metadata = ModelTrainer.load_model_complete(
-    base_name="XGBoost_20240315_143022",
-    model_dir="models/production"
-)
+📂 trained_models/modelo_data
 ```
 
 **Arquivos Salvos:**
