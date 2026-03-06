@@ -10,7 +10,7 @@
 Desenvolvido por **Pedro Cecato**<br>
 Fornecimento de dados e informações médicas **Ivson**<br>
 Coordenado pelo professor **Zildomar**<br>
-**[LabTEVE](http://www.de.ufpb.br/~labteve/) - (Laboratório de Tecnologia para o Ensino Virtual e Estatística)**<br>  
+**[LabTEVE](http://www.de.ufpb.br/~labteve/) - (Laboratório de Tecnologia para o Ensino Virtual e Estatística)**
 *Universidade Federal da Paraíba (UFPB)*
 
 [Sobre](#sobre) •
