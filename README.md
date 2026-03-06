@@ -8,7 +8,7 @@
 [![Status](https://img.shields.io/badge/Status-Em%20Desenvolvimento-yellow.svg)]()
 
 Desenvolvido por **Pedro Cecato**<br>
-Fornecimento de dados e informações médicas **Ivson**<br>
+Fornecimento de dados brutos e informações médicas por **Ivson**<br>
 Coordenado pelo professor **Zildomar**<br>
 **[LabTEVE](http://www.de.ufpb.br/~labteve/) - Universidade Federal da Paraíba (UFPB)**
 
