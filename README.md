@@ -12,13 +12,6 @@ Fornecimento de dados brutos e informações médicas por **Ivson**<br>
 Coordenado pelo professor **Zildomar**<br>
 **[LabTEVE](http://www.de.ufpb.br/~labteve/) - Universidade Federal da Paraíba (UFPB)**
 
-[Sobre](#sobre) •
-[Funcionalidades](#funcionalidades) •
-[Instalação](#instalação) •
-[Uso](#uso) •
-[Documentação](#documentação) •
-[Contribuindo](#contribuindo)
-
 </div>
 
 ---
