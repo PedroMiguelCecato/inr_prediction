@@ -176,31 +176,16 @@ nome_paciente = inr_data.get_nome_paciente()
 
 ### 🔄 2. Processamento em Lote
 ```python
-from data_manipulation import MultipleFilesProcessor
-
-# Processar múltiplos pacientes
-processor = MultipleFilesProcessor(
-    input_dir="data/pacientes",
-    output_file="dados_unificados.csv"
-)
-
-df_unified = processor.process_all_files(
-    sheet_name="TTR",
-    save_csv=True
-)
-
-# Exportar relatório consolidado
-processor.export_summary_report("relatorio_pacientes.xlsx")
+📂 datasets_union.ipynb
 ```
 
 **Recursos:**
 - ✅ Processamento paralelo de múltiplos arquivos
-- ✅ Unificação automática de datasets
-- ✅ Relatórios estatísticos por paciente
-- ✅ Tratamento robusto de erros
+- ✅ Unificação de datasets com separações definidas de dados
+- ✅ Visualização e tratamento dos dados
 
 ### 🤖 3. Treinamento com Machine Learning
-```python
+```mermaid
 from training_model import ModelTrainer
 
 # Inicializar treinador
