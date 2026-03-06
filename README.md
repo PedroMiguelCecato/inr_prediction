@@ -155,15 +155,6 @@ graph TB
 ### 📊 1. Manipulação e Limpeza de Dados
 ```python
 from data_manipulation import INRDataManipulation
-
-# Carregar e processar dados de um paciente
-inr_data = INRDataManipulation(
-    path="data/paciente_001.xlsx",
-    sheet_name="TTR"
-)
-
-# Obter dados processados
-data_final = inr_data.get_data_final()
 ```
 
 **Recursos:**
@@ -186,25 +177,6 @@ data_final = inr_data.get_data_final()
 ### 🤖 3. Treinamento com Machine Learning
 ```mermaid
 from training_model import ModelTrainer
-
-# Inicializar treinador
-trainer = ModelTrainer(
-    X_train=X_train,
-    y_train=y_train,
-    random_state=42,
-    n_splits=5
-)
-
-# Treinar modelo com otimização automática
-params, model, study = trainer.train_xgboost(n_trials=100)
-
-# Diagnosticar qualidade do modelo
-diagnostics = trainer.diagnose_model(
-    model=model,
-    X_test=X_test,
-    y_test=y_test,
-    model_name="XGBoost"
-)
 ```
 
 **Modelos Suportados:**
