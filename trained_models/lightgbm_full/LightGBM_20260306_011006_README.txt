@@ -1,0 +1,40 @@
+======================================================================
+    MODELO SALVO: LightGBM
+    ======================================================================
+
+    Data de Salvamento: 2026-03-06 01:10:06
+    Versão: 20260306_011006
+
+    TIPO: Modelo
+
+    ARQUIVOS:
+    - Modelo: LightGBM_20260306_011006_model.pkl
+    - Parâmetros: LightGBM_20260306_011006_params.json
+    - Metadata: LightGBM_20260306_011006_metadata.json
+    - Diagnósticos: LightGBM_20260306_011006_diagnostics.json
+
+    INFORMAÇÕES DO MODELO:
+    - MAE (CV): 0.3142921180978419
+    - Features: 12
+    - Amostras de Treino: 5022
+    
+
+    COMO CARREGAR E USAR:
+    ```python
+    from training_model import ModelTrainer
+    import joblib
+
+    # Opção 1: Carregar apenas o modelo
+    model = joblib.load("trained_models\lightgbm_full\LightGBM_20260306_011006_model.pkl")
+    
+    predictions = model.predict(X_test)
+    
+
+    # Opção 2: Carregar modelo completo com metadata
+    model, metadata = ModelTrainer.load_model_complete(
+        base_name="LightGBM_20260306_011006",
+        model_dir="trained_models/lightgbm_full"
+    )
+    ```
+
+    ======================================================================

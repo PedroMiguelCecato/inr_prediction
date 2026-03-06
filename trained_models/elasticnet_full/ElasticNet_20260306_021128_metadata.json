@@ -1,0 +1,30 @@
+{
+    "model_name": "ElasticNet",
+    "timestamp": "20260306_021128",
+    "training_date": "2026-03-06T02:11:28.112466",
+    "random_state": 42,
+    "n_splits_cv": 5,
+    "cv_mae": 0.34373433889590005,
+    "n_features": 12,
+    "n_samples_train": 5022,
+    "feature_names": [
+        "dose_semanal",
+        "low_range",
+        "high_range",
+        "generated",
+        "weeks_since_last_real",
+        "month",
+        "inr_lag_1",
+        "inr_lag_2",
+        "inr_lag_3",
+        "inr_lag_4",
+        "inr_roll_mean_2",
+        "inr_roll_mean_4"
+    ],
+    "is_pipeline": true,
+    "n_features_selected": 8,
+    "sparsity_ratio": 0.6666666666666666,
+    "training_time_minutes": 0.05711552302042643,
+    "n_trials": 100,
+    "n_completed_trials": 100
+}

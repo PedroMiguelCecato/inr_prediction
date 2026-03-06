@@ -1,0 +1,20 @@
+{
+    "n_estimators": 1000,
+    "max_depth": 10,
+    "learning_rate": 0.03209631938649406,
+    "min_child_weight": 7,
+    "subsample": 0.8140350861369058,
+    "colsample_bytree": 0.8452199754235129,
+    "colsample_bylevel": 0.6152151179801971,
+    "gamma": 0.4657861764966729,
+    "reg_alpha": 2.0375068484147105e-05,
+    "reg_lambda": 9.434962699095278,
+    "max_delta_step": 3,
+    "scale_pos_weight": 0.9934149344639192,
+    "objective": "reg:squarederror",
+    "eval_metric": "mae",
+    "random_state": 42,
+    "tree_method": "hist",
+    "n_jobs": -1,
+    "_is_pipeline": false
+}

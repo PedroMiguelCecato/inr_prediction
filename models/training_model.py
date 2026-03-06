@@ -4,6 +4,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import time
 import warnings
+import joblib
+import pickle
+import json
+from pathlib import Path
+from datetime import datetime
 from typing import Dict, Tuple, Optional, Any, Union, List
 from pathlib import Path
 from scipy.stats import ks_2samp
@@ -81,7 +86,7 @@ class ModelTrainer:
         self.trained_models = {}
         
         # Scaler para modelos lineares
-        self.scaler = None
+        # self.scaler = None
         
         # Armazenar diagnósticos
         self.diagnostics_history = {}
@@ -1792,3 +1797,809 @@ class ModelTrainer:
         print(f"🏆 MELHOR MODELO: {df.iloc[0]['model_name']}")
         print(f"📊 MAE: {df.iloc[0]['best_cv_mae']:.6f}")
         print("=" * 70 + "\n")
+
+    # ========================================================================
+    # Salvamento dos modelos e resultados
+    # ========================================================================
+
+    def save_model(self,
+               model_name: str,
+               output_dir: str = "trained_models",
+               include_diagnostics: bool = True,  
+               compress: bool = True) -> Dict[str, Path]:
+        """
+        Salva modelo (Pipeline para ElasticNet, modelo direto para outros).
+        
+        Arquivos salvos:
+        - {model_name}_model.pkl: Modelo treinado (Pipeline se ElasticNet)
+        - {model_name}_params.json: Hiperparâmetros
+        - {model_name}_metadata.json: Métricas e informações
+        - {model_name}_diagnostics.json: Diagnósticos (se disponível)
+        
+        Args:
+            model_name: Nome do modelo ("XGBoost", "LightGBM", etc.)
+            output_dir: Diretório onde salvar os arquivos
+            include_diagnostics: Se True, salva diagnósticos (se existir)
+            compress: Se True, usa compressão (menor arquivo)
+            
+        Returns:
+            Dicionário com caminhos dos arquivos salvos
+        """
+        
+        # Validar se modelo existe
+        if model_name not in self.trained_models:
+            available = list(self.trained_models.keys())
+            raise ValueError(
+                f"Modelo '{model_name}' não encontrado. "
+                f"Modelos disponíveis: {available}. "
+                f"Execute train_{model_name.lower()}() primeiro."
+            )
+        
+        # Criar diretório
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Obter dados do modelo
+        model_data = self.trained_models[model_name]
+        model = model_data['model']  # ✅ Pode ser Pipeline (ElasticNet) ou modelo direto
+        params = model_data['params']
+        
+        # Timestamp para versionamento
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"{model_name}_{timestamp}"
+        
+        saved_files = {}
+        
+        if self.verbose:
+            print(f"\n💾 SALVANDO MODELO: {model_name}")
+            print("=" * 70)
+        
+        # ✅ NOVO: Detectar se é Pipeline
+        is_pipeline = hasattr(model, 'named_steps')
+        
+        # ===== 1. SALVAR MODELO (Pipeline ou modelo direto) =====
+        model_file = output_path / f"{base_name}_model.pkl"
+        
+        if compress:
+            joblib.dump(model, model_file, compress=3)
+        else:
+            joblib.dump(model, model_file)
+        
+        saved_files['model'] = model_file
+        
+        if self.verbose:
+            size_mb = model_file.stat().st_size / (1024 * 1024)
+            # ✅ NOVO: Indicar tipo de modelo
+            model_type = "Pipeline (Scaler + Modelo)" if is_pipeline else "Modelo"
+            print(f"✅ {model_type} salvo: {model_file.name} ({size_mb:.2f} MB)")
+            
+            # ✅ NOVO: Mostrar steps do Pipeline
+            if is_pipeline:
+                print(f"   📦 Pipeline contém: {list(model.named_steps.keys())}")
+        
+        # ===== 2. SALVAR HIPERPARÂMETROS =====
+        params_file = output_path / f"{base_name}_params.json"
+        
+        # Converter parâmetros para formato serializável
+        params_serializable = {}
+        for key, value in params.items():
+            if isinstance(value, (int, float, str, bool, type(None))):
+                params_serializable[key] = value
+            else:
+                params_serializable[key] = str(value)
+        
+        # ✅ NOVO: Adicionar informação sobre Pipeline
+        params_serializable['_is_pipeline'] = is_pipeline
+        if is_pipeline:
+            params_serializable['_pipeline_steps'] = list(model.named_steps.keys())
+        
+        with open(params_file, 'w', encoding='utf-8') as f:
+            json.dump(params_serializable, f, indent=4, ensure_ascii=False)
+        
+        saved_files['params'] = params_file
+        
+        if self.verbose:
+            print(f"✅ Parâmetros salvos: {params_file.name}")
+        
+        # ===== 3. SALVAR METADATA =====
+        metadata = {
+            'model_name': model_name,
+            'timestamp': timestamp,
+            'training_date': datetime.now().isoformat(),
+            'random_state': self.random_state,
+            'n_splits_cv': self.n_splits,
+            'cv_mae': model_data.get('cv_mae', None),
+            'n_features': self.X_train.shape[1],
+            'n_samples_train': len(self.X_train),
+            'feature_names': list(self.X_train.columns),
+            'is_pipeline': is_pipeline  # ✅ NOVO
+        }
+        
+        # ✅ NOVO: Se for Pipeline ElasticNet, adicionar info sobre features selecionadas
+        if is_pipeline and 'model' in model.named_steps:
+            inner_model = model.named_steps['model']
+            if hasattr(inner_model, 'coef_'):
+                n_features_nonzero = int(np.sum(inner_model.coef_ != 0))
+                metadata['n_features_selected'] = n_features_nonzero
+                metadata['sparsity_ratio'] = float(n_features_nonzero / len(inner_model.coef_))
+        
+        # Adicionar informações do histórico de treinamento
+        if self.training_history:
+            for record in self.training_history:
+                if record['model_name'] == model_name:
+                    metadata['training_time_minutes'] = record['training_time_minutes']
+                    metadata['n_trials'] = record['n_trials']
+                    metadata['n_completed_trials'] = record['n_completed_trials']
+                    break
+        
+        metadata_file = output_path / f"{base_name}_metadata.json"
+        
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=4, ensure_ascii=False)
+        
+        saved_files['metadata'] = metadata_file
+        
+        if self.verbose:
+            print(f"✅ Metadata salvo: {metadata_file.name}")
+        
+        # ===== 4. ❌ REMOVIDO: Salvamento de scaler separado
+        # O scaler agora está dentro do Pipeline, não precisa ser salvo separadamente
+        
+        # ===== 5. SALVAR DIAGNÓSTICOS =====
+        if include_diagnostics and model_name in self.diagnostics_history:
+            diagnostics = self.diagnostics_history[model_name]
+            
+            # Converter para formato serializável
+            diagnostics_serializable = {}
+            for key, value in diagnostics.items():
+                if key == 'suspicious_features':
+                    diagnostics_serializable[key] = [
+                        {'feature': feat, 'correlation': float(corr)}
+                        for feat, corr in value
+                    ]
+                elif isinstance(value, (int, float, str, bool, type(None))):
+                    diagnostics_serializable[key] = value
+                elif isinstance(value, np.number):  # ✅ NOVO: Tratar numpy numbers
+                    diagnostics_serializable[key] = float(value)
+                else:
+                    diagnostics_serializable[key] = str(value)
+            
+            diagnostics_file = output_path / f"{base_name}_diagnostics.json"
+            
+            with open(diagnostics_file, 'w', encoding='utf-8') as f:
+                json.dump(diagnostics_serializable, f, indent=4, ensure_ascii=False)
+            
+            saved_files['diagnostics'] = diagnostics_file
+            
+            if self.verbose:
+                print(f"✅ Diagnósticos salvos: {diagnostics_file.name}")
+        
+        # ===== 6. CRIAR README (ATUALIZADO) =====
+        readme_file = output_path / f"{base_name}_README.txt"
+        
+        # ✅ NOVO: Texto adaptado para Pipeline
+        model_type_str = "Pipeline (Scaler + Modelo)" if is_pipeline else "Modelo"
+        usage_note = """
+    # ⚠️ IMPORTANTE: Este é um Pipeline (inclui normalização automática)
+    # Use dados BRUTOS para predição - o Pipeline normaliza automaticamente!
+    predictions = model.predict(X_test)  # X_test em dados BRUTOS
+    """ if is_pipeline else """
+    predictions = model.predict(X_test)
+    """
+        
+        readme_content = f"""
+    {'='*70}
+    MODELO SALVO: {model_name}
+    {'='*70}
+
+    Data de Salvamento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    Versão: {timestamp}
+
+    TIPO: {model_type_str}
+
+    ARQUIVOS:
+    - Modelo: {saved_files['model'].name}
+    - Parâmetros: {saved_files['params'].name}
+    - Metadata: {saved_files['metadata'].name}
+    {'- Diagnósticos: ' + saved_files['diagnostics'].name if 'diagnostics' in saved_files else ''}
+
+    INFORMAÇÕES DO MODELO:
+    - MAE (CV): {model_data.get('cv_mae', 'N/A')}
+    - Features: {self.X_train.shape[1]}
+    - Amostras de Treino: {len(self.X_train)}
+    {"- Features Selecionadas: " + str(metadata.get('n_features_selected', 'N/A')) if is_pipeline else ''}
+
+    COMO CARREGAR E USAR:
+    ```python
+    from training_model import ModelTrainer
+    import joblib
+
+    # Opção 1: Carregar apenas o modelo
+    model = joblib.load("{saved_files['model']}")
+    {usage_note}
+
+    # Opção 2: Carregar modelo completo com metadata
+    model, metadata = ModelTrainer.load_model_complete(
+        base_name="{base_name}",
+        model_dir="{output_dir}"
+    )
+    ```
+
+    {'='*70}
+        """.strip()
+        
+        with open(readme_file, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        
+        saved_files['readme'] = readme_file
+        
+        if self.verbose:
+            print(f"✅ README criado: {readme_file.name}")
+            print("=" * 70)
+            print(f"\n📁 Todos os arquivos salvos em: {output_path.absolute()}")
+            print(f"📦 Total de arquivos: {len(saved_files)}")
+        
+        return saved_files
+
+    def save_model_scaler(self,
+                model_name: str,
+                output_dir: str = "trained_models",
+                include_scaler: bool = True,
+                include_diagnostics: bool = True,
+                compress: bool = True) -> Dict[str, Path]:
+        """
+        OBS: Esta pra ser removido, use save_model() que já salva o Pipeline completo (modelo + scaler).
+        Salva um modelo treinado com todos os metadados necessários.
+        
+        Arquivos salvos:
+        - {model_name}_model.pkl: Modelo treinado
+        - {model_name}_params.json: Hiperparâmetros
+        - {model_name}_metadata.json: Métricas e informações
+        - {model_name}_scaler.pkl: Scaler (se ElasticNet)
+        - {model_name}_diagnostics.json: Diagnósticos (se disponível)
+        
+        Args:
+            model_name: Nome do modelo ("XGBoost", "LightGBM", etc.)
+            output_dir: Diretório onde salvar os arquivos
+            include_scaler: Se True, salva scaler (se existir)
+            include_diagnostics: Se True, salva diagnósticos (se existir)
+            compress: Se True, usa compressão (menor arquivo)
+            
+        Returns:
+            Dicionário com caminhos dos arquivos salvos
+            
+        Raises:
+            ValueError: Se modelo não foi treinado
+            
+        Exemplo:
+            # Treinar modelo
+            params, model, study = trainer.train_xgboost(n_trials=100)
+            
+            # Salvar modelo
+            saved_files = trainer.save_model(
+                model_name="XGBoost",
+                output_dir="models/production",
+                compress=True
+            )
+            
+            print(f"Modelo salvo em: {saved_files['model']}")
+        """
+        
+        # Validar se modelo existe
+        if model_name not in self.trained_models:
+            available = list(self.trained_models.keys())
+            raise ValueError(
+                f"Modelo '{model_name}' não encontrado. "
+                f"Modelos disponíveis: {available}. "
+                f"Execute train_{model_name.lower()}() primeiro."
+            )
+        
+        # Criar diretório
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Obter dados do modelo
+        model_data = self.trained_models[model_name]
+        model = model_data['model']
+        params = model_data['params']
+        
+        # Timestamp para versionamento
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = f"{model_name}_{timestamp}"
+        
+        saved_files = {}
+        
+        if self.verbose:
+            print(f"\n💾 SALVANDO MODELO: {model_name}")
+            print("=" * 70)
+        
+        # ===== 1. SALVAR MODELO =====
+        model_file = output_path / f"{base_name}_model.pkl"
+        
+        if compress:
+            joblib.dump(model, model_file, compress=3)
+        else:
+            joblib.dump(model, model_file)
+        
+        saved_files['model'] = model_file
+        
+        if self.verbose:
+            size_mb = model_file.stat().st_size / (1024 * 1024)
+            print(f"✅ Modelo salvo: {model_file.name} ({size_mb:.2f} MB)")
+        
+        # ===== 2. SALVAR HIPERPARÂMETROS =====
+        params_file = output_path / f"{base_name}_params.json"
+        
+        # Converter parâmetros para formato serializável
+        params_serializable = {}
+        for key, value in params.items():
+            if isinstance(value, (int, float, str, bool, type(None))):
+                params_serializable[key] = value
+            else:
+                params_serializable[key] = str(value)
+        
+        with open(params_file, 'w', encoding='utf-8') as f:
+            json.dump(params_serializable, f, indent=4, ensure_ascii=False)
+        
+        saved_files['params'] = params_file
+        
+        if self.verbose:
+            print(f"✅ Parâmetros salvos: {params_file.name}")
+        
+        # ===== 3. SALVAR METADATA =====
+        metadata = {
+            'model_name': model_name,
+            'timestamp': timestamp,
+            'training_date': datetime.now().isoformat(),
+            'random_state': self.random_state,
+            'n_splits_cv': self.n_splits,
+            'cv_mae': model_data.get('cv_mae', None),
+            'n_features': self.X_train.shape[1],
+            'n_samples_train': len(self.X_train),
+            'feature_names': list(self.X_train.columns)
+        }
+        
+        # Adicionar informações do histórico de treinamento
+        if self.training_history:
+            for record in self.training_history:
+                if record['model_name'] == model_name:
+                    metadata['training_time_minutes'] = record['training_time_minutes']
+                    metadata['n_trials'] = record['n_trials']
+                    metadata['n_completed_trials'] = record['n_completed_trials']
+                    break
+        
+        metadata_file = output_path / f"{base_name}_metadata.json"
+        
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=4, ensure_ascii=False)
+        
+        saved_files['metadata'] = metadata_file
+        
+        if self.verbose:
+            print(f"✅ Metadata salvo: {metadata_file.name}")
+        
+        # ===== 4. SALVAR SCALER (se ElasticNet) =====
+        if include_scaler and model_name == "ElasticNet" and self.scaler is not None:
+            scaler_file = output_path / f"{base_name}_scaler.pkl"
+            joblib.dump(self.scaler, scaler_file)
+            saved_files['scaler'] = scaler_file
+            
+            if self.verbose:
+                print(f"✅ Scaler salvo: {scaler_file.name}")
+        
+        # ===== 5. SALVAR DIAGNÓSTICOS =====
+        if include_diagnostics and model_name in self.diagnostics_history:
+            diagnostics = self.diagnostics_history[model_name]
+            
+            # Converter para formato serializável
+            diagnostics_serializable = {}
+            for key, value in diagnostics.items():
+                if key == 'suspicious_features':
+                    # Lista de tuplas (feature, correlation)
+                    diagnostics_serializable[key] = [
+                        {'feature': feat, 'correlation': float(corr)}
+                        for feat, corr in value
+                    ]
+                elif isinstance(value, (int, float, str, bool, type(None))):
+                    diagnostics_serializable[key] = value
+                else:
+                    diagnostics_serializable[key] = str(value)
+            
+            diagnostics_file = output_path / f"{base_name}_diagnostics.json"
+            
+            with open(diagnostics_file, 'w', encoding='utf-8') as f:
+                json.dump(diagnostics_serializable, f, indent=4, ensure_ascii=False)
+            
+            saved_files['diagnostics'] = diagnostics_file
+            
+            if self.verbose:
+                print(f"✅ Diagnósticos salvos: {diagnostics_file.name}")
+        
+        # ===== 6. CRIAR README =====
+        readme_file = output_path / f"{base_name}_README.txt"
+        
+        readme_content = f"""
+    {'='*70}
+    MODELO SALVO: {model_name}
+    {'='*70}
+
+    Data de Salvamento: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    Versão: {timestamp}
+
+    ARQUIVOS:
+    - Modelo: {saved_files['model'].name}
+    - Parâmetros: {saved_files['params'].name}
+    - Metadata: {saved_files['metadata'].name}
+    {'- Scaler: ' + saved_files['scaler'].name if 'scaler' in saved_files else ''}
+    {'- Diagnósticos: ' + saved_files['diagnostics'].name if 'diagnostics' in saved_files else ''}
+
+    INFORMAÇÕES DO MODELO:
+    - MAE (CV): {model_data.get('cv_mae', 'N/A')}
+    - Features: {self.X_train.shape[1]}
+    - Amostras de Treino: {len(self.X_train)}
+
+    COMO CARREGAR:
+    ```python
+    from training_model import ModelTrainer
+
+    # Opção 1: Carregar modelo individual
+    model = ModelTrainer.load_model("{saved_files['model']}")
+
+    # Opção 2: Carregar modelo completo com metadata
+    model, metadata = ModelTrainer.load_model_complete("{base_name}", "{output_dir}")
+    ```
+
+    {'='*70}
+        """.strip()
+        
+        with open(readme_file, 'w', encoding='utf-8') as f:
+            f.write(readme_content)
+        
+        saved_files['readme'] = readme_file
+        
+        if self.verbose:
+            print(f"✅ README criado: {readme_file.name}")
+            print("=" * 70)
+            print(f"\n📁 Todos os arquivos salvos em: {output_path.absolute()}")
+            print(f"📦 Total de arquivos: {len(saved_files)}")
+        
+        return saved_files
+
+
+    def save_all_models(self,
+                    output_dir: str = "saved_models",
+                    compress: bool = True) -> Dict[str, Dict[str, Path]]:
+        """
+        Salva todos os modelos treinados.
+        
+        Args:
+            output_dir: Diretório base para salvar
+            compress: Se True, usa compressão
+            
+        Returns:
+            Dicionário com caminhos de todos os modelos salvos
+            
+        Exemplo:
+            # Treinar vários modelos
+            trainer.train_xgboost(n_trials=100)
+            trainer.train_lightgbm(n_trials=100)
+            trainer.train_randomforest(n_trials=80)
+            
+            # Salvar todos
+            all_saved = trainer.save_all_models(output_dir="models/batch_20240315")
+            
+            for model_name, files in all_saved.items():
+                print(f"{model_name}: {len(files)} arquivos salvos")
+        """
+        
+        if not self.trained_models:
+            print("⚠️ Nenhum modelo treinado. Treine modelos primeiro.")
+            return {}
+        
+        print(f"\n💾 SALVANDO TODOS OS MODELOS ({len(self.trained_models)} modelos)")
+        print("=" * 70)
+        
+        all_saved = {}
+        
+        for model_name in self.trained_models.keys():
+            try:
+                saved_files = self.save_model(
+                    model_name=model_name,
+                    output_dir=output_dir,
+                    compress=compress
+                )
+                all_saved[model_name] = saved_files
+                
+            except Exception as e:
+                print(f"❌ Erro ao salvar {model_name}: {e}")
+        
+        print("\n" + "=" * 70)
+        print(f"✅ SALVAMENTO CONCLUÍDO: {len(all_saved)}/{len(self.trained_models)} modelos")
+        print("=" * 70)
+        
+        return all_saved
+
+
+    @staticmethod
+    def load_model(model_path: Union[str, Path]) -> Any:
+        """
+        Carrega apenas o modelo (sem metadata).
+        
+        Args:
+            model_path: Caminho para o arquivo .pkl do modelo
+            
+        Returns:
+            Modelo carregado
+            
+        Exemplo:
+            model = ModelTrainer.load_model("saved_models/XGBoost_20240315_143022_model.pkl")
+            predictions = model.predict(X_test)
+        """
+        model_path = Path(model_path)
+        
+        if not model_path.exists():
+            raise FileNotFoundError(f"Arquivo não encontrado: {model_path}")
+        
+        print(f"📥 Carregando modelo: {model_path.name}")
+        model = joblib.load(model_path)
+        print(f"✅ Modelo carregado com sucesso!")
+        
+        return model
+
+    @staticmethod
+    def load_model_complete(base_name: str,
+                        model_dir: str = "saved_models") -> Tuple[Any, Dict]:
+        """
+        Carrega modelo (Pipeline ou direto) com metadados.
+        Não retorna mais scaler separado, pois ele está no Pipeline.
+        
+        Args:
+            base_name: Nome base do modelo (ex: "XGBoost_20240315_143022")
+            model_dir: Diretório onde o modelo está salvo
+            
+        Returns:
+            Tuple contendo (modelo, metadata)
+            - Para ElasticNet: modelo é Pipeline (scaler + modelo)
+            - Para outros: modelo direto
+            
+        Exemplo:
+            # Carregar qualquer modelo
+            model, metadata = ModelTrainer.load_model_complete(
+                base_name="XGBoost_20240315_143022",
+                model_dir="saved_models"
+            )
+            
+            # Usar (Pipeline normaliza automaticamente se ElasticNet)
+            predictions = model.predict(X_test)  # X_test em dados BRUTOS
+        """
+        model_dir = Path(model_dir)
+        
+        print(f"\n📥 CARREGANDO MODELO COMPLETO: {base_name}")
+        print("=" * 70)
+        
+        # Carregar modelo (pode ser Pipeline ou modelo direto)
+        model_file = model_dir / f"{base_name}_model.pkl"
+        if not model_file.exists():
+            raise FileNotFoundError(f"Modelo não encontrado: {model_file}")
+        
+        model = joblib.load(model_file)
+        
+        # ✅ NOVO: Detectar tipo
+        is_pipeline = hasattr(model, 'named_steps')
+        model_type = "Pipeline" if is_pipeline else "Modelo"
+        
+        print(f"✅ {model_type} carregado: {model_file.name}")
+        
+        # ✅ NOVO: Mostrar steps do Pipeline
+        if is_pipeline:
+            print(f"   📦 Pipeline contém: {list(model.named_steps.keys())}")
+        
+        # Carregar metadata
+        metadata_file = model_dir / f"{base_name}_metadata.json"
+        if metadata_file.exists():
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            print(f"✅ Metadata carregado: {metadata_file.name}")
+        else:
+            metadata = {}
+            print(f"⚠️ Metadata não encontrado")
+        
+        # O scaler agora está no Pipeline, não é mais salvo separadamente
+        # Carregar parâmetros
+        params_file = model_dir / f"{base_name}_params.json"
+        if params_file.exists():
+            with open(params_file, 'r', encoding='utf-8') as f:
+                params = json.load(f)
+            metadata['params'] = params
+            print(f"✅ Parâmetros carregados: {params_file.name}")
+        
+        # Carregar diagnósticos
+        diagnostics_file = model_dir / f"{base_name}_diagnostics.json"
+        if diagnostics_file.exists():
+            with open(diagnostics_file, 'r', encoding='utf-8') as f:
+                diagnostics = json.load(f)
+            metadata['diagnostics'] = diagnostics
+            print(f"✅ Diagnósticos carregados: {diagnostics_file.name}")
+        
+        print("=" * 70)
+        print(f"✅ Carregamento completo!")
+        
+        # Mostrar informações
+        if metadata:
+            print(f"\n📊 INFORMAÇÕES DO MODELO:")
+            print(f"   Modelo: {metadata.get('model_name', 'N/A')}")
+            print(f"   Tipo: {model_type}")
+            print(f"   Data de treino: {metadata.get('training_date', 'N/A')}")
+            print(f"   MAE (CV): {metadata.get('cv_mae', 'N/A')}")
+            print(f"   Features: {metadata.get('n_features', 'N/A')}")
+            print(f"   Amostras: {metadata.get('n_samples_train', 'N/A')}")
+            
+            # ✅ NOVO: Informações específicas do Pipeline
+            if is_pipeline:
+                if 'n_features_selected' in metadata:
+                    print(f"   Features selecionadas: {metadata['n_features_selected']}")
+                    print(f"   Taxa de esparsidade: {metadata.get('sparsity_ratio', 0):.2%}")
+                print(f"\n   ⚠️ IMPORTANTE: Use dados BRUTOS para predição")
+                print(f"   O Pipeline normaliza automaticamente!")
+        
+        # Retornar apenas (model, metadata)
+        # Não retorna mais scaler separado
+        return model, metadata
+
+    @staticmethod
+    def load_model_complete_scaled(base_name: str,
+                        model_dir: str = "saved_models") -> Tuple[Any, Dict, Optional[Any]]:
+        """
+        OBS: está pra ser removida - use load_model_complete() que já lida com scaler dentro do Pipeline.
+        Carrega modelo com todos os metadados.
+        
+        Args:
+            base_name: Nome base do modelo (ex: "XGBoost_20240315_143022")
+            model_dir: Diretório onde o modelo está salvo
+            
+        Returns:
+            Tuple contendo (modelo, metadata, scaler)
+            scaler será None se não for ElasticNet
+            
+        Exemplo:
+            model, metadata, scaler = ModelTrainer.load_model_complete(
+                base_name="XGBoost_20240315_143022",
+                model_dir="saved_models"
+            )
+            
+            print(f"MAE (CV): {metadata['cv_mae']}")
+            print(f"Features: {metadata['feature_names']}")
+            
+            predictions = model.predict(X_test)
+        """
+        model_dir = Path(model_dir)
+        
+        print(f"\n📥 CARREGANDO MODELO COMPLETO: {base_name}")
+        print("=" * 70)
+        
+        # Carregar modelo
+        model_file = model_dir / f"{base_name}_model.pkl"
+        if not model_file.exists():
+            raise FileNotFoundError(f"Modelo não encontrado: {model_file}")
+        
+        model = joblib.load(model_file)
+        print(f"✅ Modelo carregado: {model_file.name}")
+        
+        # Carregar metadata
+        metadata_file = model_dir / f"{base_name}_metadata.json"
+        if metadata_file.exists():
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            print(f"✅ Metadata carregado: {metadata_file.name}")
+        else:
+            metadata = {}
+            print(f"⚠️ Metadata não encontrado")
+        
+        # Carregar scaler (se existir)
+        scaler_file = model_dir / f"{base_name}_scaler.pkl"
+        if scaler_file.exists():
+            scaler = joblib.load(scaler_file)
+            print(f"✅ Scaler carregado: {scaler_file.name}")
+        else:
+            scaler = None
+        
+        # Carregar parâmetros (opcional)
+        params_file = model_dir / f"{base_name}_params.json"
+        if params_file.exists():
+            with open(params_file, 'r', encoding='utf-8') as f:
+                params = json.load(f)
+            metadata['params'] = params
+            print(f"✅ Parâmetros carregados: {params_file.name}")
+        
+        # Carregar diagnósticos (opcional)
+        diagnostics_file = model_dir / f"{base_name}_diagnostics.json"
+        if diagnostics_file.exists():
+            with open(diagnostics_file, 'r', encoding='utf-8') as f:
+                diagnostics = json.load(f)
+            metadata['diagnostics'] = diagnostics
+            print(f"✅ Diagnósticos carregados: {diagnostics_file.name}")
+        
+        print("=" * 70)
+        print(f"✅ Carregamento completo!")
+        
+        # Mostrar informações
+        if metadata:
+            print(f"\n📊 INFORMAÇÕES DO MODELO:")
+            print(f"   Modelo: {metadata.get('model_name', 'N/A')}")
+            print(f"   Data de treino: {metadata.get('training_date', 'N/A')}")
+            print(f"   MAE (CV): {metadata.get('cv_mae', 'N/A')}")
+            print(f"   Features: {metadata.get('n_features', 'N/A')}")
+            print(f"   Amostras: {metadata.get('n_samples_train', 'N/A')}")
+        
+        return model, metadata, scaler
+
+
+    def list_saved_models(self, model_dir: str = "saved_models") -> pd.DataFrame:
+        """
+        Lista todos os modelos salvos em um diretório.
+        
+        Args:
+            model_dir: Diretório onde procurar modelos
+            
+        Returns:
+            DataFrame com informações dos modelos salvos
+            
+        Exemplo:
+            df_models = trainer.list_saved_models("saved_models")
+            print(df_models)
+        """
+        model_dir = Path(model_dir)
+        
+        if not model_dir.exists():
+            print(f"⚠️ Diretório não encontrado: {model_dir}")
+            return pd.DataFrame()
+        
+        # Encontrar todos os arquivos de modelo
+        model_files = list(model_dir.glob("*_model.pkl"))
+        
+        if not model_files:
+            print(f"⚠️ Nenhum modelo encontrado em: {model_dir}")
+            return pd.DataFrame()
+        
+        models_info = []
+        
+        for model_file in model_files:
+            # Extrair base_name
+            base_name = model_file.stem.replace('_model', '')
+            
+            # Tentar carregar metadata
+            metadata_file = model_dir / f"{base_name}_metadata.json"
+            
+            info = {
+                'base_name': base_name,
+                'model_file': model_file.name,
+                'size_mb': model_file.stat().st_size / (1024 * 1024),
+                'modified': datetime.fromtimestamp(model_file.stat().st_mtime)
+            }
+            
+            if metadata_file.exists():
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                
+                info['model_name'] = metadata.get('model_name', 'N/A')
+                info['cv_mae'] = metadata.get('cv_mae', None)
+                info['n_features'] = metadata.get('n_features', None)
+                info['training_date'] = metadata.get('training_date', 'N/A')
+            else:
+                info['model_name'] = 'N/A'
+                info['cv_mae'] = None
+                info['n_features'] = None
+                info['training_date'] = 'N/A'
+            
+            models_info.append(info)
+        
+        df = pd.DataFrame(models_info)
+        df = df.sort_values('modified', ascending=False)
+        
+        print(f"\n📋 MODELOS SALVOS EM: {model_dir.absolute()}")
+        print("=" * 100)
+        print(df.to_string(index=False))
+        print("=" * 100)
+        print(f"Total: {len(df)} modelos")
+        
+        return df

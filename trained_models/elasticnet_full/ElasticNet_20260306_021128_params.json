@@ -1,0 +1,11 @@
+{
+    "alpha": 0.0036969138804174317,
+    "l1_ratio": 0.7278812333803708,
+    "tol": 0.00016813474136062132,
+    "selection": "cyclic",
+    "_is_pipeline": true,
+    "_pipeline_steps": [
+        "scaler",
+        "model"
+    ]
+}
